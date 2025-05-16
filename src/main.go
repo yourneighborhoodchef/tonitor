@@ -18,10 +18,46 @@ import (
 	"github.com/bogdanfinn/tls-client/profiles"
 )
 
+type logMessage struct {
+	message string
+	json    bool
+}
+
 var ErrProxyBlocked = errors.New("proxy blocked")
 var proxyList []string
 var proxyListMutex sync.Mutex
 var proxyCounter uint32
+
+// Global logger channel
+var logChan chan logMessage
+
+func startLogger() {
+	logChan = make(chan logMessage, 1000)
+
+	go func() {
+		for msg := range logChan {
+			if msg.json {
+				fmt.Println(msg.message)
+			} else {
+				fmt.Fprintln(os.Stderr, msg.message)
+			}
+		}
+	}()
+}
+
+func logPrintf(format string, args ...interface{}) {
+	select {
+	case logChan <- logMessage{message: fmt.Sprintf(format, args...), json: false}:
+	default:
+	}
+}
+
+func logJSON(jsonStr string) {
+	select {
+	case logChan <- logMessage{message: jsonStr, json: true}:
+	default:
+	}
+}
 
 type stockStatus struct {
 	Data struct {
@@ -43,7 +79,7 @@ func extractStockStatus(body []byte) (bool, error) {
 		if len(sample) > 200 {
 			sample = sample[:200] + "..."
 		}
-		fmt.Printf("JSON parse error: %v\nSample response: %s\n", err, sample)
+		logPrintf("JSON parse error: %v\nSample response: %s", err, sample)
 		return false, err
 	}
 
@@ -305,12 +341,10 @@ func buildHeaders(tcin string) http.Header {
 	h.Set("Sec-Fetch-Dest", "empty")
 	h.Set("Priority", "u=1,i")
 
-	// Optional Cache-Control
 	if cc := cacheOpts[profile.cacheIdx]; cc != "" {
 		h.Set("Cache-Control", cc)
 	}
 
-	// Viewport hints - use pre-generated probabilities
 	if profile.viewportProb[0] < 0.7 {
 		h.Set("Sec-CH-Viewport-Width", strconv.Itoa(profile.viewport.Width))
 	}
@@ -321,7 +355,6 @@ func buildHeaders(tcin string) http.Header {
 		h.Set("Sec-CH-DPR", fmt.Sprintf("%.1f", profile.viewport.PixelRatio))
 	}
 
-	// Network/client hints - use pre-generated probabilities
 	if profile.hints.ConnectionType != "" && profile.hintsProb[0] < 0.6 {
 		h.Set("Connection", profile.hints.ConnectionType)
 	}
@@ -338,12 +371,10 @@ func buildHeaders(tcin string) http.Header {
 		h.Set("Save-Data", "on")
 	}
 
-	// Device memory hint
 	if profile.memProb < 0.3 {
 		h.Set("Device-Memory", memOpts[profile.memIdx])
 	}
 
-	// Set header order
 	h[http.HeaderOrderKey] = headerOrder
 
 	return h
@@ -469,6 +500,8 @@ type result struct {
 	Status    string
 	ProductID string
 	Timestamp int64
+	WorkerID  int
+	Latency   float64
 }
 
 type StockMessage struct {
@@ -564,12 +597,10 @@ func (tj *tokenJar) refiller() {
 				tj.tokens = tj.maxTokens
 			}
 
-			// Notify if we went from 0 to having tokens
 			if prevTokens == 0 && tj.tokens > 0 {
 				select {
 				case tj.tokensAvailable <- struct{}{}:
 				default:
-					// Channel already has notification
 				}
 			}
 			tj.mu.Unlock()
@@ -642,89 +673,67 @@ func monitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency
 		numWorkers := initialConcurrency
 		atomic.StoreInt32(&activeWorkers, int32(numWorkers))
 
-		// Start initial workers
 		for i := 0; i < numWorkers; i++ {
 			workerControl <- i
 		}
 
-		// Continuously adjust worker count based on load
 		ticker := time.NewTicker(10 * time.Second)
 		defer ticker.Stop()
 
 		for range ticker.C {
-			// Calculate current requests per second
 			requestWindowMutex.Lock()
 			windowDuration := time.Since(requestWindowStart).Seconds()
 			reqs := atomic.LoadInt64(&requestsInWindow)
 			currentRPS := float64(reqs) / windowDuration
 
-			// Reset the window
 			atomic.StoreInt64(&requestsInWindow, 0)
 			requestWindowStart = time.Now()
 			requestWindowMutex.Unlock()
 
 			if reqs == 0 {
-				continue // No data yet or no requests in window
+				continue
 			}
 
 			currentWorkers := atomic.LoadInt32(&activeWorkers)
 
-			// The token jar handles the exact rate limiting, but we adjust workers
-			// based on whether we need more parallelism or less
-
-			// Calculate ideal workers: if we're hitting our RPS target,
-			// adjust worker count based on whether workers are waiting too long
-			// for tokens (need fewer workers) or handling requests efficiently (keep same)
-
 			var desiredWorkers int32
 
-			// If we're significantly under our target RPS, add workers
 			if currentRPS < targetRPS*0.8 {
-				// Add workers to handle more requests in parallel
 				desiredWorkers = int32(float64(currentWorkers) * 1.5)
 			} else if currentRPS > targetRPS*1.2 {
-				// If we're over the target, reduce workers
 				desiredWorkers = int32(float64(currentWorkers) * 0.8)
 			} else {
-				// We're close to the target, keep the same
 				desiredWorkers = currentWorkers
 			}
 
-			// Maintain reasonable worker limits
 			if desiredWorkers < 1 {
 				desiredWorkers = 1
 			} else if desiredWorkers > 50 {
 				desiredWorkers = 50
 			}
 
-			// Apply changes gradually
 			workerDiff := desiredWorkers - currentWorkers
 			if workerDiff > 3 {
-				workerDiff = 3 // Add max 3 workers at once
+				workerDiff = 3
 			} else if workerDiff < -3 {
-				workerDiff = -3 // Remove max 3 workers at once
+				workerDiff = -3
 			}
 
 			newWorkerCount := currentWorkers + workerDiff
 
-			// Apply the worker scaling
 			if newWorkerCount > currentWorkers {
-				// Add workers
 				for i := 0; i < int(newWorkerCount-currentWorkers); i++ {
 					workerID := int(currentWorkers) + i
 					workerControl <- workerID
 					atomic.AddInt32(&activeWorkers, 1)
 				}
 			} else if newWorkerCount < currentWorkers {
-				// Signal to reduce workers (will stop naturally)
 				atomic.StoreInt32(&activeWorkers, newWorkerCount)
 			}
 		}
 	}()
 
-	// Worker factory function
 	workerFactory := func(workerID int) {
-		// Each worker gets its own client with separate cookie jar
 		client, err := createClient()
 		if err != nil {
 			return
@@ -732,26 +741,21 @@ func monitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency
 
 		workerRequests := 0
 
-		// Track request durations for this worker
 		var totalDuration time.Duration
 		var headerGenDuration time.Duration
 
 		for {
-			// Check if this worker should exit due to scaling down
 			if int32(workerID) >= atomic.LoadInt32(&activeWorkers) {
 				return
 			}
 
-			// Wait for a token from the jar before making a request
 			jar.waitForToken()
 
-			// First measure just the header generation time separately
 			headerStart := time.Now()
-			_ = buildHeaders(tcin) // Just generate but don't use
+			_ = buildHeaders(tcin)
 			headerTime := time.Since(headerStart)
 			headerGenDuration += headerTime
 
-			// Now time the whole request
 			requestStart := time.Now()
 			ok, err := checkStock(client, tcin)
 			requestDuration := time.Since(requestStart)
@@ -776,9 +780,10 @@ func monitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency
 				Status:    status,
 				ProductID: tcin,
 				Timestamp: time.Now().Unix(),
+				WorkerID:  workerID,
+				Latency:   requestDuration.Seconds(),
 			}
 
-			// If the proxy was blocked, create a new client to pick the next proxy
 			if errors.Is(err, ErrProxyBlocked) {
 				newClient, cerr := createClient()
 				if cerr != nil {
@@ -787,25 +792,19 @@ func monitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency
 				client = newClient
 			}
 
-			// Add slight jitter between requests (10-50ms)
-			// This prevents all workers from synchronizing
 			time.Sleep(time.Duration(10+rand.Intn(40)) * time.Millisecond)
 		}
 	}
 
-	// Launch workers as signaled
 	go func() {
 		for workerID := range workerControl {
 			go workerFactory(workerID)
 		}
 	}()
 
-	// Process results
-	// Heartbeat interval to ensure periodic updates
 	heartbeatInterval := targetDelayMs
 	lastPublishTime := time.Now().Add(-heartbeatInterval)
 
-	// Send initial status message to stdout
 	initialStatusMsg := map[string]interface{}{
 		"status":     "initializing",
 		"product_id": tcin,
@@ -823,7 +822,6 @@ func monitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency
 		statusMutex.Lock()
 		now := time.Now()
 		if r.Status != prevStatus || r.Status == "error" || now.Sub(lastPublishTime) >= heartbeatInterval {
-			// Create a result object
 			resultObj := map[string]interface{}{
 				"status":     r.Status,
 				"product_id": r.ProductID,
@@ -831,20 +829,17 @@ func monitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency
 				"retailer":   "target",
 				"last_check": float64(now.UnixNano()) / 1e9,
 				"in_stock":   r.Status == "in-stock",
-				"worker_id":  0,
-				"latency":    0.1, // Dummy value
+				"worker_id":  r.WorkerID,
+				"latency":    r.Latency,
 			}
 
-			// Convert to JSON and print to stdout
 			resultJSON, err := json.Marshal(resultObj)
 			if err != nil {
 				fmt.Printf("Error serializing message: %v\n", err)
 			} else {
-				// Print the JSON to stdout
 				fmt.Println(string(resultJSON))
 			}
 
-			// Update last publish time and status
 			lastPublishTime = now
 			prevStatus = r.Status
 		}
@@ -865,7 +860,6 @@ func initHeaderProfilePool(count int) {
 func main() {
 	rand.Seed(time.Now().UnixNano())
 
-	// Check for help flag
 	for _, arg := range os.Args[1:] {
 		if arg == "-h" || arg == "--help" {
 			fmt.Println("Usage: tonitor <TCIN> [delay_ms] [proxy_list]")
@@ -883,7 +877,7 @@ func main() {
 
 	tcin := os.Args[1]
 
-	targetDelayMs := 30000 // Default to 30 seconds between requests (0.033 RPS)
+	targetDelayMs := 30000
 	if len(os.Args) > 2 {
 		if d, err := strconv.Atoi(os.Args[2]); err == nil && d > 0 {
 			targetDelayMs = d
