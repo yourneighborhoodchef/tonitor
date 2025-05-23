@@ -19,6 +19,20 @@ Scalpers use bots and automation tools to purchase high-demand Pokémon products
 - Auto-adjusts request rates based on Target's server response
 - Outputs stock status as JSON for easy integration with notification systems
 
+## Installation
+
+### Prerequisites
+
+- Go 1.24.2 or later
+
+### Build from Source
+
+```bash
+git clone https://github.com/yourneighborhoodchef/tonitor.git
+cd tonitor
+go build -o tonitor ./cmd/tonitor
+```
+
 ## Usage
 
 ```bash
@@ -34,6 +48,37 @@ Scalpers use bots and automation tools to purchase high-demand Pokémon products
 ```bash
 # Monitor Pokémon TCG Elite Trainer Box with TCIN 83449367
 ./tonitor 83449367 15000 http://user:pass@proxy1.example.com,http://user:pass@proxy2.example.com
+```
+
+### Help
+
+```bash
+./tonitor -h
+```
+
+## Project Structure
+
+```
+tonitor/
+├── cmd/
+│   └── tonitor/         # Main application entry point
+│       └── main.go
+├── internal/
+│   ├── client/          # HTTP client with anti-detection features
+│   │   ├── http.go
+│   │   └── stock.go
+│   ├── headers/         # Browser fingerprint generation
+│   │   └── generator.go
+│   ├── logging/         # Logging utilities
+│   │   └── logger.go
+│   ├── monitor/         # Core monitoring logic
+│   │   ├── monitor.go
+│   │   └── types.go
+│   └── ratelimit/       # Rate limiting implementation
+│       └── tokenbucket.go
+├── go.mod
+├── go.sum
+└── README.md
 ```
 
 ## Tips for Success
