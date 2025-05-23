@@ -43,7 +43,7 @@ jobs:
         go build -ldflags="-s -w" -o tonitor-${{ matrix.suffix }} ./cmd/tonitor
 
     - name: Upload artifacts
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: tonitor-${{ matrix.suffix }}
         path: tonitor-${{ matrix.suffix }}
@@ -55,7 +55,7 @@ jobs:
     - uses: actions/checkout@v4
 
     - name: Download all artifacts
-      uses: actions/download-artifact@v3
+      uses: actions/download-artifact@v4
 
     - name: Create Release
       uses: softprops/action-gh-release@v1
