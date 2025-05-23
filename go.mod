@@ -1,4 +1,4 @@
-module main
+module github.com/yourneighborhoodchef/tonitor
 
 go 1.24.2
 
