@@ -33,6 +33,44 @@ cd tonitor
 go build -o tonitor ./cmd/tonitor
 ```
 
+### Using as a Go Package
+
+You can also integrate tonitor directly into your Go applications:
+
+```bash
+go get github.com/yourneighborhoodchef/tonitor
+```
+
+#### Example Integration
+
+```go
+package main
+
+import (
+    "fmt"
+    "time"
+    
+    "github.com/yourneighborhoodchef/tonitor/internal/headers"
+    "github.com/yourneighborhoodchef/tonitor/internal/monitor"
+)
+
+func main() {
+    // Initialize header profiles for anti-detection
+    headers.InitProfilePool(15000)
+    
+    // Set up monitoring parameters
+    tcin := "50516598"           // Target product ID
+    delayMs := 3500              // 3.5 seconds between checks
+    workers := 3                 // Number of concurrent workers
+    
+    fmt.Printf("Monitoring TCIN %s with %d second intervals using %d workers\n", 
+        tcin, delayMs/1000, workers)
+    
+    // Start monitoring - this will run indefinitely
+    monitor.MonitorProduct(tcin, time.Duration(delayMs)*time.Millisecond, workers)
+}
+```
+
 ## Usage
 
 ```bash
