@@ -228,14 +228,20 @@ func generateProfile() Profile {
 	}
 }
 
-func BuildHeaders(tcin string) http.Header {
+func BuildHeaders(tcin string, compressionTypes ...string) http.Header {
 	profile := profilePool.Get().(Profile)
 	defer profilePool.Put(profile)
 
 	h := http.Header{}
 	h.Set("Accept", acceptOpts[profile.acceptIdx])
 	h.Set("Accept-Language", langOpts[profile.langIdx])
-	h.Set("Accept-Encoding", encOpts[profile.encIdx])
+	
+	// Use custom compression types if provided, otherwise use default options
+	if len(compressionTypes) > 0 {
+		h.Set("Accept-Encoding", compressionTypes[0])
+	} else {
+		h.Set("Accept-Encoding", encOpts[profile.encIdx])
+	}
 	h.Set("User-Agent", profile.ua)
 	h.Set("Sec-CH-UA", profile.secCHUA)
 	h.Set("Sec-CH-UA-Mobile", func() string {

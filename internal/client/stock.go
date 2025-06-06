@@ -49,7 +49,7 @@ func extractStockStatus(body []byte) (bool, error) {
 	return false, nil
 }
 
-func CheckStock(client *ProxiedClient, tcin string) (bool, error) {
+func CheckStock(client *ProxiedClient, tcin string, compressionTypes ...string) (bool, error) {
 	url := fmt.Sprintf(
 		"https://redsky.target.com/redsky_aggregations/v1/web/product_fulfillment_v1"+
 			"?key=9f36aeafbe60771e321a7cc95a78140772ab3e96"+
@@ -62,7 +62,7 @@ func CheckStock(client *ProxiedClient, tcin string) (bool, error) {
 		return false, err
 	}
 
-	req.Header = headers.BuildHeaders(tcin)
+	req.Header = headers.BuildHeaders(tcin, compressionTypes...)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -98,7 +98,7 @@ func CheckStock(client *ProxiedClient, tcin string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		req2.Header = headers.BuildHeaders(proxyTCIN)
+		req2.Header = headers.BuildHeaders(proxyTCIN, compressionTypes...)
 		resp2, err := client.Do(req2)
 		if err != nil {
 			return false, err

@@ -14,7 +14,7 @@ import (
 	"github.com/yourneighborhoodchef/tonitor/internal/ratelimit"
 )
 
-func MonitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency int) {
+func MonitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency int, compressionTypes ...string) {
 	var prevStatus string
 	resultChan := make(chan Result)
 
@@ -115,12 +115,12 @@ func MonitorProduct(tcin string, targetDelayMs time.Duration, initialConcurrency
 			jar.WaitForToken()
 
 			headerStart := time.Now()
-			_ = headers.BuildHeaders(tcin)
+			_ = headers.BuildHeaders(tcin, compressionTypes...)
 			headerTime := time.Since(headerStart)
 			headerGenDuration += headerTime
 
 			requestStart := time.Now()
-			ok, err := client.CheckStock(httpClient, tcin)
+			ok, err := client.CheckStock(httpClient, tcin, compressionTypes...)
 			requestDuration := time.Since(requestStart)
 			totalDuration += requestDuration
 
